@@ -7,7 +7,7 @@ Este projeto automatiza o processo de abertura de chamados em um portal ServiceN
 
 💡 O que o script faz?  
  <ul>
-  <li> Lê uma planilha (automacao.xlsx) contendo os dados das solicitações </li>
+  <li> Lê uma planilha contendo os dados das solicitações </li>
   <li> Identifica automaticamente o cabeçalho da planilha </li>
   <li> Preenche formulários web de forma automatizada usando Selenium </li>
   <li> Interage com campos dinâmicos (Select2, inputs e referências) </li>
