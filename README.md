@@ -3,8 +3,9 @@
 🚀 Automação de Abertura de Chamados via ServiceNow com Selenium
 
 Este projeto automatiza o processo de abertura de chamados em um portal ServiceNow, utilizando dados extraídos de uma planilha Excel. A solução foi desenvolvida em Python com foco em agilizar o processo.
+<hr>
 
-💡 O que o script faz?  <hr>
+💡 O que o script faz?  
  <ul>
   <li> Lê uma planilha (automacao.xlsx) contendo os dados das solicitações </li>
   <li> Identifica automaticamente o cabeçalho da planilha </li>
