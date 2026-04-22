@@ -16,6 +16,7 @@ Este projeto automatiza o processo de abertura de chamados em um portal ServiceN
   <li> Atualiza a planilha com os protocolos gerados </li>
   <li> Continua execuções interrompidas sem duplicar chamados </li>
  </ul>
+ <br>
 
  📦 Tecnologias utilizadas
  <ul>
