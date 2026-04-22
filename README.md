@@ -25,3 +25,8 @@ Este projeto automatiza o processo de abertura de chamados em um portal ServiceN
   <li> Pandas </li>
   <li> OpenPyXL </li>
  </ul>
+
+
+📌 Observações
+
+Este projeto foi desenvolvido para automatizar processos internos e pode exigir adaptações dependendo da estrutura do    formulário ou regras do ambiente ServiceNow.
