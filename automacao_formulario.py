@@ -354,8 +354,8 @@ def preencher_reference(id_container_s2, texto):
 
 
 # =========================
-# ✅ NOVA FUNÇÃO: campo "local" sempre seleciona a 1ª opção
-# =========================
+# ✅ Campo "local" sempre seleciona a 1ª opção
+# ======================================
 def preencher_reference_local(id_container_s2, texto):
     """
     Digita o texto no campo de busca e seleciona SEMPRE a primeira opção
@@ -392,7 +392,7 @@ def preencher_reference_local(id_container_s2, texto):
         fechar_dropdown()
         return
 
-    # ✅ Sempre seleciona a primeira opção, sem tentar match
+    # Sempre seleciona a primeira opção, sem tentar match
     primeira = visiveis[0]
     print(f"    → Primeira opção disponível: '{primeira.text.strip()}'")
     clicar(primeira)
@@ -582,7 +582,7 @@ SELECT2 = {
 
 REFERENCE_NOME = "s2id_sp_formfield_requested_for"
 
-# ✅ "local" foi removido daqui — agora usa preencher_reference_local
+
 REFERENCE = {}
 
 INPUTS = {
@@ -597,7 +597,7 @@ ORDEM = [
     "tipo de servico", "aplicativo", "utilizado", "setor inst.", "descricao"
 ]
 
-# ✅ ID do Select2 do campo local centralizado aqui para fácil manutenção
+
 LOCAL_S2_ID = "s2id_sp_formfield_u_unidade_hosp"
 
 
