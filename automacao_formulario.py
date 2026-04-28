@@ -13,9 +13,9 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
 # =========================
-# CONFIGURAÇÃO
+#       CONFIGURAÇÃO
 # =========================
-os.chdir(r"C:\Users\emill\Desktop\Programação\Testes\Rede D'or")
+os.chdir(r"C:\Users\emill\Desktop\Programação\Rede_Dor\Formulário")
 
 URL = "https://rdslprod.service-now.com/snow?id=sc_cat_item&sys_id=8d9d72d71b4ea11060d9426fe54bcbe0&referrer=popular_items"
 PLANILHA = "automacao.xlsx"
@@ -32,7 +32,7 @@ except PermissionError:
     input("Pressione ENTER depois de fechar o arquivo...")
 
 # =========================
-# LENDO PLANILHA
+#      LENDO PLANILHA
 # =========================
 def normalizar(texto):
     return (
@@ -88,7 +88,7 @@ def salvar_planilha():
 
 
 # =========================
-# DRIVER
+#          DRIVER
 # =========================
 service = Service("C:/drivers/msedgedriver.exe")
 options = webdriver.EdgeOptions()
@@ -97,14 +97,14 @@ options.add_argument("--disable-notifications")
 
 driver = webdriver.Edge(service=service, options=options)
 
-
+ 
 WAIT_LONGO  = WebDriverWait(driver, 120)  # login / submit
 WAIT_MEDIO  = WebDriverWait(driver, 15)   # elementos normais do form
 WAIT_CURTO  = WebDriverWait(driver, 5)    # elementos que devem já estar visíveis
 
 
 # =========================
-# FUNÇÕES AUXILIARES
+#   FUNÇÕES AUXILIARES
 # =========================
 
 def aguardar_formulario():
@@ -337,7 +337,7 @@ def preencher_reference(id_container_s2, texto):
     if visiveis:
         selecionou = _selecionar_por_celulas(visiveis, texto)
         if not selecionou:
-            # seleciona a primeira opção disponível ao invés de não selecionar nada
+            #  seleciona a primeira opção disponível ao invés de não selecionar nada
             clicar(visiveis[0])
             print(f"    ⚠️  '{texto}' não encontrado — selecionou primeiro: '{visiveis[0].text.strip()}'")
             selecionou = True
@@ -354,8 +354,8 @@ def preencher_reference(id_container_s2, texto):
 
 
 # =========================
-# Campo "local" sempre seleciona a 1ª opção
-# ======================================
+#  Campo "local" sempre seleciona a 1ª opção
+# =========================
 def preencher_reference_local(id_container_s2, texto):
     """
     Digita o texto no campo de busca e seleciona SEMPRE a primeira opção
@@ -480,7 +480,7 @@ def preencher_reference_nome(id_container_s2, texto):
 
 
 def preencher_reference_setor(id_container_s2, texto):
-    """Campo setor com fallback para 'ADM' se não encontrar o valor."""
+    """Campo setor: tenta match exato primeiro. Se não achar, digita 'adm' e seleciona a 1ª opção."""
     texto = str(texto).strip()
 
     if not abrir_select2(id_container_s2):
@@ -493,24 +493,30 @@ def preencher_reference_setor(id_container_s2, texto):
         fechar_dropdown()
         return
 
-    def _tentar(termo):
-        _digitar_no_search(search, termo)
-        visiveis = aguardar_opcoes_dropdown(timeout=4)
-        if visiveis:
-            return _selecionar_por_celulas(visiveis, termo)
-        return False
+    # 1ª tentativa: busca pelo valor real da planilha
+    _digitar_no_search(search, texto)
+    visiveis = aguardar_opcoes_dropdown(timeout=4)
+    selecionou = _selecionar_por_celulas(visiveis, texto) if visiveis else False
 
-    selecionou = _tentar(texto)
-
+    # Fallback: digita "adm" e pega a 1ª opção que aparecer
     if not selecionou:
-        print(f"    ⚠️  '{texto}' não encontrado — tentando fallback 'ADM'...")
-        selecionou = _tentar("ADM")
-        if not selecionou:
-            print(f"    ❌ Fallback 'ADM' também não encontrado.")
-        try:
-            search.send_keys(Keys.ESCAPE)
-        except Exception:
-            pass
+        print(f"    ⚠️  '{texto}' não encontrado — fallback: digitando 'adm' e selecionando 1ª opção...")
+        _digitar_no_search(search, "adm")
+        time.sleep(1.0)  # campo pode ser lento para carregar
+        visiveis = aguardar_opcoes_dropdown(timeout=6)
+
+        if visiveis:
+            primeira = visiveis[0]
+            print(f"    → Primeira opção disponível: '{primeira.text.strip()}'")
+            clicar(primeira)
+            print(f"    ✅ Setor selecionado (fallback): '{primeira.text.strip()}'")
+            selecionou = True
+        else:
+            print(f"    ❌ Nenhuma opção encontrada nem com 'adm'.")
+            try:
+                search.send_keys(Keys.ESCAPE)
+            except Exception:
+                pass
 
     fechar_dropdown()
     if selecionou:
@@ -582,7 +588,7 @@ SELECT2 = {
 
 REFERENCE_NOME = "s2id_sp_formfield_requested_for"
 
-
+# ✅ "local" foi removido daqui — agora usa preencher_reference_local
 REFERENCE = {}
 
 INPUTS = {
@@ -606,7 +612,7 @@ def valor_valido(val):
 
 
 # =========================
-# LOOP PRINCIPAL
+#      LOOP PRINCIPAL
 # =========================
 
 primeira_pendente = None
@@ -701,4 +707,4 @@ for index, linha in df.iterrows():
             aguardar_formulario()
 
 driver.quit()
-print("\n🎉 Concluído! Chamados salvos em 'automacao.xlsx'.")
+print("\n Concluído! Chamados salvos em 'automacao.xlsx'.")
