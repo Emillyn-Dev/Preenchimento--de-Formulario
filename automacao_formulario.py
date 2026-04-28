@@ -97,7 +97,7 @@ options.add_argument("--disable-notifications")
 
 driver = webdriver.Edge(service=service, options=options)
 
-# Timeouts centralizados — ajuste aqui se a rede estiver lenta
+
 WAIT_LONGO  = WebDriverWait(driver, 120)  # login / submit
 WAIT_MEDIO  = WebDriverWait(driver, 15)   # elementos normais do form
 WAIT_CURTO  = WebDriverWait(driver, 5)    # elementos que devem já estar visíveis
@@ -337,7 +337,7 @@ def preencher_reference(id_container_s2, texto):
     if visiveis:
         selecionou = _selecionar_por_celulas(visiveis, texto)
         if not selecionou:
-            # ✅ CORREÇÃO: seleciona a primeira opção disponível ao invés de não selecionar nada
+            # seleciona a primeira opção disponível ao invés de não selecionar nada
             clicar(visiveis[0])
             print(f"    ⚠️  '{texto}' não encontrado — selecionou primeiro: '{visiveis[0].text.strip()}'")
             selecionou = True
@@ -354,7 +354,7 @@ def preencher_reference(id_container_s2, texto):
 
 
 # =========================
-# ✅ Campo "local" sempre seleciona a 1ª opção
+# Campo "local" sempre seleciona a 1ª opção
 # ======================================
 def preencher_reference_local(id_container_s2, texto):
     """
@@ -377,7 +377,7 @@ def preencher_reference_local(id_container_s2, texto):
     # Digita o texto e aguarda o sistema processar a busca
     _digitar_no_search(search, texto)
 
-    # ⏳ Pausa extra: o campo "local" costuma ser mais lento para carregar sugestões
+    # Pausa extra: o campo "local" costuma ser mais lento para carregar sugestões
     time.sleep(1.5)
 
     # Aguarda opções com timeout maior para campos lentos
