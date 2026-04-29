@@ -1,0 +1,1041 @@
+# ============================================================
+# AUTOMAÇÃO DE FORMULÁRIO — ServiceNow (Rede D'Or)
+# ============================================================
+# O que este script faz:
+#   Lê uma planilha Excel com dados de solicitantes e preenche
+#   automaticamente o formulário web do ServiceNow para cada
+#   linha ainda sem número de chamado.
+#
+# Como rodar:
+#   1. Abra o terminal e navegue até a pasta do projeto:
+#        cd .\Formulário
+#   2. Ative o ambiente virtual Python (venv):
+#        .\.venv\Scripts\Activate.ps1
+#   3. Execute o script:
+#        python automacao_formulario.py
+# ============================================================
+
+
+# --- Bibliotecas padrão do Python ---
+import os           # Para manipular caminhos e mudar o diretório de trabalho
+import re           # Para expressões regulares (buscar padrões em texto)
+import time         # Para pausas e controle de tempo
+import unicodedata  # Para normalizar caracteres especiais (acentos, cedilha etc.)
+
+# --- Bibliotecas externas (instale via pip) ---
+import pandas as pd  # Para ler e escrever arquivos Excel
+
+# Selenium: biblioteca de automação de navegadores web
+from selenium import webdriver
+from selenium.webdriver import ActionChains                          # Simula ações do mouse/teclado
+from selenium.webdriver.common.by import By                         # Formas de localizar elementos HTML
+from selenium.webdriver.common.keys import Keys                     # Teclas especiais (ESC, ENTER etc.)
+from selenium.webdriver.edge.service import Service                 # Serviço do driver do Edge
+from selenium.webdriver.support import expected_conditions as EC    # Condições de espera
+from selenium.webdriver.support.ui import WebDriverWait             # Espera inteligente por elementos
+
+
+# =========================
+# CONFIGURAÇÃO
+# =========================
+# ⚠️  ALTERE AQUI ao reutilizar em outro computador ou projeto:
+
+# Pasta onde estão a planilha e o script
+os.chdir(r"C:\Users\emill\Desktop\Programação\Rede_Dor\Formulário")
+# ↑ Troque pelo caminho da pasta no seu computador
+
+# URL do formulário web que será preenchido
+URL = "https://rdslprod.service-now.com/snow?id=sc_cat_item&sys_id=8d9d72d71b4ea11060d9426fe54bcbe0&referrer=popular_items"
+# ↑ Troque pela URL do formulário que você quer automatizar
+
+# Nome do arquivo Excel com os dados
+PLANILHA = "automacao.xlsx"
+# ↑ Troque pelo nome da sua planilha
+
+# Nome da aba dentro do Excel
+SHEET = "Planilha1"
+# ↑ Troque pelo nome da aba correta na sua planilha
+
+
+# =========================
+# VERIFICA SE PLANILHA ESTÁ ABERTA
+# =========================
+# Tenta abrir o arquivo Excel em modo de escrita.
+# Se o Excel estiver com o arquivo aberto, isso gera um PermissionError,
+# e o script avisa o usuário antes de continuar.
+try:
+    with open(PLANILHA, "r+b"):
+        pass
+except PermissionError:
+    print("❌ ERRO: Feche o arquivo 'automacao.xlsx' no Excel antes de rodar o script!")
+    input("Pressione ENTER depois de fechar o arquivo...")
+
+
+# =========================
+# LENDO PLANILHA
+# =========================
+
+def normalizar(texto):
+    """
+    Converte um texto para formato padronizado:
+    remove acentos, converte para minúsculas e elimina espaços nas bordas.
+    Exemplo: 'Ação'  →  'acao'
+    Usado para comparar nomes de colunas sem se preocupar com capitalização ou acentos.
+    """
+    return (
+        unicodedata.normalize("NFKD", str(texto))
+        .encode("ascii", errors="ignore")
+        .decode("utf-8")
+        .lower()
+        .strip()
+    )
+
+
+# Lê a planilha sem definir cabeçalho ainda (header=None),
+# tratando tudo como string para evitar conversões automáticas indesejadas
+df_raw = pd.read_excel(PLANILHA, sheet_name=SHEET, header=None, dtype=str)
+
+# Detecta automaticamente qual linha contém o cabeçalho da tabela:
+# procura a primeira linha com 5 ou mais colunas preenchidas
+header_row = None
+for i, row in df_raw.iterrows():
+    colunas = [str(v).strip() for v in row.values if pd.notna(v) and str(v).strip() != ""]
+    if len(colunas) >= 5:
+        header_row = i
+        break
+
+if header_row is None:
+    print("❌ Não foi possível detectar o cabeçalho da planilha.")
+    raise SystemExit
+
+# Relê a planilha agora usando a linha de cabeçalho detectada
+df = pd.read_excel(PLANILHA, sheet_name=SHEET, header=header_row, dtype=str)
+
+# Normaliza os nomes das colunas (remove acentos, minúsculas, sem espaços extras)
+df.columns = [normalizar(col) for col in df.columns]
+
+# Remove linhas completamente vazias e reinicia os índices
+df = df.dropna(how="all").reset_index(drop=True)
+
+# Exibe no terminal as colunas encontradas para conferência
+print("=" * 50)
+print("Colunas encontradas na planilha:")
+for i, col in enumerate(df.columns):
+    print(f"  [{i}] '{col}'")
+print(f"\nTotal de linhas: {len(df)}")
+print("=" * 50)
+
+# Garante que a coluna "chamado" existe. Se não existir na planilha, cria vazia.
+# Essa coluna é onde o número do protocolo gerado será salvo.
+if "chamado" not in df.columns:
+    df["chamado"] = ""
+
+
+def salvar_planilha():
+    """
+    Salva o DataFrame atualizado de volta no arquivo Excel.
+    Tenta até 5 vezes caso o arquivo esteja bloqueado pelo Excel.
+    Na primeira falha, pede ao usuário que feche o arquivo.
+    """
+    for tentativa in range(5):
+        try:
+            with pd.ExcelWriter(PLANILHA, mode="w", engine="openpyxl") as writer:
+                df.to_excel(writer, sheet_name=SHEET, index=False)
+            print("  💾 Planilha salva.")
+            return
+        except PermissionError:
+            if tentativa == 0:
+                print("  ⚠️  Feche o 'automacao.xlsx' no Excel e pressione ENTER...")
+                input()
+            else:
+                time.sleep(2)  # Aguarda 2 segundos antes de tentar novamente
+    print("  ❌ Não foi possível salvar a planilha.")
+
+
+# =========================
+# DRIVER (NAVEGADOR)
+# =========================
+# ⚠️  ALTERE AQUI ao reutilizar:
+# O "msedgedriver.exe" é o controlador do navegador Microsoft Edge.
+# Deve ser compatível com a versão do Edge instalada no seu computador.
+# Baixe em: https://developer.microsoft.com/en-us/microsoft-edge/tools/webdriver/
+service = Service("C:/drivers/msedgedriver.exe")
+# ↑ Troque pelo caminho onde você salvou o msedgedriver.exe
+
+# Opções de inicialização do navegador
+options = webdriver.EdgeOptions()
+options.add_argument("--start-maximized")        # Abre o navegador maximizado
+options.add_argument("--disable-notifications")  # Desativa notificações do site
+
+# Inicia o navegador Edge com as configurações definidas acima
+driver = webdriver.Edge(service=service, options=options)
+
+# ⚠️  ALTERE AQUI se a conexão estiver lenta:
+# Timeouts definem quanto tempo (em segundos) o script aguarda por cada elemento.
+# Aumente os valores se o formulário demorar mais para carregar na sua rede.
+WAIT_LONGO = WebDriverWait(driver, 120)  # Usado para login e envio do formulário
+WAIT_MEDIO = WebDriverWait(driver, 15)   # Usado para elementos normais do formulário
+WAIT_CURTO = WebDriverWait(driver, 5)    # Usado para elementos que já devem estar visíveis
+
+
+# =========================
+# FUNÇÕES AUXILIARES
+# =========================
+
+def aguardar_formulario():
+    """
+    Aguarda o formulário estar completamente carregado e pronto para interação.
+    Verifica que o botão de envio ("submit-btn") está visível e clicável.
+    A pausa de 1.5s é necessária para os campos Select2 terminarem de inicializar —
+    sem ela, o campo "nome" pode não retornar sugestões mesmo com o nome correto.
+    """
+    print("  ⏳ Aguardando formulário...")
+    WAIT_LONGO.until(EC.presence_of_element_located((By.ID, "submit-btn")))
+    WAIT_LONGO.until(EC.element_to_be_clickable((By.ID, "submit-btn")))
+    time.sleep(1.5)  # Aguarda inicialização completa dos campos Select2
+    print("  ✅ Formulário pronto!")
+
+
+def fechar_dropdown():
+    """
+    Fecha o dropdown Select2 se estiver aberto.
+    Tenta primeiro com a tecla ESC; se ainda estiver aberto, clica no body da página.
+    Não faz nada se nenhum dropdown estiver visível.
+    """
+    try:
+        drops = driver.find_elements(By.CSS_SELECTOR, ".select2-drop-active")
+        if not any(d.is_displayed() for d in drops):
+            return  # Nenhum dropdown aberto, nada a fazer
+        ActionChains(driver).send_keys(Keys.ESCAPE).perform()
+        drops = driver.find_elements(By.CSS_SELECTOR, ".select2-drop-active")
+        if any(d.is_displayed() for d in drops):
+            driver.find_element(By.TAG_NAME, "body").click()
+    except Exception:
+        pass  # Ignora erros silenciosamente
+
+
+def clicar(elemento):
+    """
+    Clica em um elemento da página de forma robusta.
+    Primeiro tenta o clique padrão com ActionChains (move o mouse até o elemento).
+    Se falhar (elemento fora da tela ou obstruído), usa JavaScript para rolar a
+    página até o elemento e clicar via script.
+    """
+    try:
+        ActionChains(driver).move_to_element(elemento).click().perform()
+    except Exception:
+        driver.execute_script("arguments[0].scrollIntoView(true); arguments[0].click();", elemento)
+
+
+def dropdown_aberto():
+    """
+    Verifica se algum dropdown Select2 está visível no momento.
+    Retorna True se aberto, False caso contrário.
+    """
+    try:
+        drops = driver.find_elements(By.CSS_SELECTOR, ".select2-drop-active")
+        return any(d.is_displayed() for d in drops)
+    except Exception:
+        return False
+
+
+def abrir_select2(id_container_s2):
+    """
+    Tenta abrir um campo dropdown Select2 usando 4 estratégias diferentes,
+    em ordem crescente de complexidade. Retorna True se conseguiu abrir.
+
+    Estratégias:
+      1. Clica no link padrão do Select2 (elemento <a> com classe select2-choice)
+      2. Clica no container externo do Select2
+      3. Abre via jQuery (para casos em que o clique não funciona)
+      4. Foca no input interno e pressiona ESPAÇO
+
+    ⚠️  Raramente precisa ser alterado — só se o site trocar a versão do Select2.
+    """
+    select_id = id_container_s2.replace("s2id_", "", 1)  # Remove o prefixo "s2id_" para obter o ID real
+    fechar_dropdown()  # Garante que nenhum outro dropdown está aberto
+
+    # Estratégia 1: Link padrão
+    try:
+        link = driver.find_element(By.CSS_SELECTOR, f"#{id_container_s2} a.select2-choice")
+        clicar(link)
+        if dropdown_aberto():
+            return True
+    except Exception:
+        pass
+
+    # Estratégia 2: Container externo
+    try:
+        container = driver.find_element(By.ID, id_container_s2)
+        clicar(container)
+        if dropdown_aberto():
+            return True
+    except Exception:
+        pass
+
+    # Estratégia 3: Via jQuery (executa JavaScript direto no navegador)
+    try:
+        driver.execute_script(f'$("#{select_id}").select2("open");')
+        if dropdown_aberto():
+            return True
+    except Exception:
+        pass
+
+    # Estratégia 4: Foca no input interno e pressiona ESPAÇO
+    try:
+        focusser = driver.find_element(By.CSS_SELECTOR, f"#{id_container_s2} input.select2-focusser")
+        driver.execute_script("arguments[0].focus();", focusser)
+        ActionChains(driver).send_keys_to_element(focusser, Keys.SPACE).perform()
+        if dropdown_aberto():
+            return True
+    except Exception:
+        pass
+
+    return False  # Nenhuma estratégia funcionou
+
+
+def obter_search_input():
+    """
+    Retorna o campo de texto de busca do dropdown Select2 que estiver visível.
+    Esse campo é onde o texto é digitado para filtrar as opções.
+    """
+    try:
+        els = driver.find_elements(By.CSS_SELECTOR, "input[id^='s2id_autogen'][id$='_search']")
+        visiveis = [e for e in els if e.is_displayed()]
+        return visiveis[0] if visiveis else None
+    except Exception:
+        return None
+
+
+def aguardar_opcoes_dropdown(timeout=5):
+    """
+    Aguarda as opções do dropdown aparecerem, sem usar sleep fixo.
+    Verifica a cada 80ms usando 3 seletores CSS diferentes (do mais específico ao mais genérico).
+    Retorna a lista de opções visíveis assim que encontrar alguma, ou lista vazia se
+    o timeout esgotar.
+
+    Parâmetro:
+      timeout: segundos máximos de espera (padrão: 5)
+    """
+    seletores = [
+        ".select2-results li.select2-result-selectable",
+        ".select2-drop-active li.select2-result-selectable",
+        ".select2-results li",
+    ]
+    fim = time.monotonic() + timeout
+    while time.monotonic() < fim:
+        for seletor in seletores:
+            try:
+                opcoes = driver.find_elements(By.CSS_SELECTOR, seletor)
+                visiveis = [o for o in opcoes if o.is_displayed() and o.text.strip()]
+                if visiveis:
+                    return visiveis
+            except Exception:
+                pass
+        time.sleep(0.08)  # Poll mínimo para não travar a CPU
+    return []  # Timeout esgotado, nenhuma opção encontrada
+
+
+def aguardar_selecao_confirmada(id_container_s2, timeout=8):
+    """
+    Aguarda o Select2 exibir um valor selecionado (diferente de placeholder vazio).
+    Confirma visualmente que a seleção foi registrada pelo formulário.
+    Retorna True se confirmado dentro do timeout, False caso contrário.
+
+    Parâmetro:
+      timeout: segundos máximos de espera (padrão: 8)
+    """
+    # Textos que indicam que nenhuma opção foi selecionada ainda
+    placeholders = {"selecione", "select", "", "selecione...", "select...", "carregando..."}
+    try:
+        WebDriverWait(driver, timeout).until(
+            lambda d: d.find_element(
+                By.CSS_SELECTOR, f"#{id_container_s2} .select2-chosen"
+            ).text.strip().lower() not in placeholders
+        )
+        valor = driver.find_element(
+            By.CSS_SELECTOR, f"#{id_container_s2} .select2-chosen"
+        ).text.strip()
+        print(f"    ✅ Confirmado: '{valor}'")
+        return True
+    except Exception:
+        print(f"    ⚠️  Seleção não confirmada em '{id_container_s2}', seguindo...")
+        return False
+
+
+def _digitar_no_search(search, texto):
+    """
+    Limpa o campo de busca do Select2 e digita o texto desejado.
+    Usa JavaScript para limpar (mais confiável que .clear() em Select2).
+    """
+    driver.execute_script("arguments[0].focus(); arguments[0].value = '';", search)
+    search.send_keys(texto)
+
+
+def _selecionar_por_celulas(visiveis, texto):
+    """
+    Tenta selecionar uma opção do dropdown comparando o texto com cada "célula"
+    de uma linha (pois algumas opções têm múltiplas colunas separadas por tabs/espaços).
+
+    Primeira passagem: busca correspondência EXATA (case-insensitive).
+    Segunda passagem: busca correspondência PARCIAL (o texto está contido na opção).
+
+    Retorna True se selecionou alguma opção, False caso contrário.
+    """
+    texto_lower = texto.lower()
+
+    # Tentativa 1: correspondência exata em alguma coluna
+    for opcao in visiveis:
+        partes = re.split(r'\s{2,}|\t', opcao.text.strip())  # Divide por 2+ espaços ou tab
+        colunas = [p.strip() for p in partes if p.strip()]
+        if any(c.lower() == texto_lower for c in colunas):
+            clicar(opcao)
+            print(f"    ✅ Selecionado (exato): '{opcao.text.strip()}'")
+            return True
+
+    # Tentativa 2: correspondência parcial em alguma coluna
+    for opcao in visiveis:
+        partes = re.split(r'\s{2,}|\t', opcao.text.strip())
+        colunas = [p.strip() for p in partes if p.strip()]
+        if any(texto_lower in c.lower() for c in colunas):
+            clicar(opcao)
+            print(f"    ✅ Selecionado (parcial): '{opcao.text.strip()}'")
+            return True
+
+    return False
+
+
+# =========================
+# FUNÇÕES DE PREENCHIMENTO
+# =========================
+
+def selecionar_select2(id_container_s2, texto_opcao):
+    """
+    Preenche um campo Select2 de lista fixa (opções pré-definidas, não busca no servidor).
+    Abre o dropdown, digita o texto para filtrar e seleciona a opção correspondente.
+    Se não encontrar correspondência exata, seleciona a primeira opção disponível.
+
+    Usado para campos como: usuário, localizado, gerente, serviço TI etc.
+    """
+    texto_opcao = str(texto_opcao).strip()
+
+    # Aguarda o container do Select2 estar visível antes de interagir
+    try:
+        WAIT_CURTO.until(EC.visibility_of_element_located((By.ID, id_container_s2)))
+    except Exception:
+        pass
+
+    if not abrir_select2(id_container_s2):
+        print(f"    ❌ Não conseguiu abrir '{id_container_s2}'")
+        return
+
+    search = obter_search_input()
+    if search:
+        _digitar_no_search(search, texto_opcao)
+
+    visiveis = aguardar_opcoes_dropdown(timeout=4)
+    selecionou = False
+
+    if visiveis:
+        # Procura a opção com texto exatamente igual ao da planilha
+        for opcao in visiveis:
+            if opcao.text.strip().lower() == texto_opcao.lower():
+                clicar(opcao)
+                print(f"    ✅ Selecionado: '{opcao.text.strip()}'")
+                selecionou = True
+                break
+        # Se não encontrou exato, seleciona a primeira opção (fallback)
+        if not selecionou:
+            clicar(visiveis[0])
+            print(f"    ⚠️  '{texto_opcao}' não encontrado — selecionou '{visiveis[0].text.strip()}'")
+            selecionou = True
+    else:
+        print(f"    ❌ Nenhuma opção visível para '{texto_opcao}'")
+
+    fechar_dropdown()
+    if selecionou:
+        aguardar_selecao_confirmada(id_container_s2)
+
+
+def preencher_reference(id_container_s2, texto):
+    """
+    Preenche um campo Select2 do tipo "reference" (busca no servidor ao digitar).
+    Digita o texto, aguarda as sugestões do servidor e seleciona a melhor correspondência.
+    Usa match por colunas para lidar com opções que exibem múltiplas informações.
+    """
+    texto = str(texto).strip()
+
+    if not abrir_select2(id_container_s2):
+        print(f"    ❌ Não conseguiu abrir '{id_container_s2}'")
+        return
+
+    search = obter_search_input()
+    if search is None:
+        print(f"    ❌ Campo de busca não apareceu para '{id_container_s2}'")
+        fechar_dropdown()
+        return
+
+    _digitar_no_search(search, texto)
+    visiveis = aguardar_opcoes_dropdown(timeout=5)
+
+    selecionou = False
+    if visiveis:
+        selecionou = _selecionar_por_celulas(visiveis, texto)
+        if not selecionou:
+            # Fallback: seleciona a primeira opção se não houver correspondência
+            clicar(visiveis[0])
+            print(f"    ⚠️  '{texto}' não encontrado — selecionou primeiro: '{visiveis[0].text.strip()}'")
+            selecionou = True
+    else:
+        try:
+            search.send_keys(Keys.ESCAPE)
+        except Exception:
+            pass
+        print(f"    ⚠️  Sem sugestão para '{texto}'")
+
+    fechar_dropdown()
+    if selecionou:
+        aguardar_selecao_confirmada(id_container_s2)
+
+
+def preencher_reference_local(id_container_s2, texto):
+    """
+    Preenche o campo "local" (unidade hospitalar).
+    Diferente dos outros campos, sempre seleciona a PRIMEIRA opção que aparecer,
+    sem tentar correspondência exata — pois os nomes no sistema podem ter formatação
+    diferente da planilha (ex: siglas vs nome completo).
+
+    A pausa de 1.5s é necessária porque a busca de local é mais lenta no servidor.
+    """
+    texto = str(texto).strip()
+
+    if not abrir_select2(id_container_s2):
+        print(f"    ❌ Não conseguiu abrir '{id_container_s2}'")
+        return
+
+    search = obter_search_input()
+    if search is None:
+        print(f"    ❌ Campo de busca não apareceu para '{id_container_s2}'")
+        fechar_dropdown()
+        return
+
+    _digitar_no_search(search, texto)
+    time.sleep(1.5)  # Aguarda a resposta do servidor para o campo de local
+
+    visiveis = aguardar_opcoes_dropdown(timeout=8)
+
+    if not visiveis:
+        print(f"    ⚠️  Nenhuma sugestão para '{texto}' no campo local")
+        try:
+            search.send_keys(Keys.ESCAPE)
+        except Exception:
+            pass
+        fechar_dropdown()
+        return
+
+    # Sempre seleciona a primeira opção, sem verificar correspondência
+    primeira = visiveis[0]
+    print(f"    → Primeira opção disponível: '{primeira.text.strip()}'")
+    clicar(primeira)
+    print(f"    ✅ Local selecionado: '{primeira.text.strip()}'")
+
+    fechar_dropdown()
+    aguardar_selecao_confirmada(id_container_s2)
+
+
+def preencher_reference_nome(id_container_s2, texto):
+    """
+    Preenche o campo "nome" (pessoa solicitante) no formulário.
+    Faz a busca no servidor e tenta correspondência em duas etapas:
+      1. Pelo NOME COMPLETO (primeira coluna da opção)
+      2. Pelo E-MAIL (prefixo antes do @, segunda coluna)
+
+    Se nenhuma correspondência for encontrada, retorna False e a linha é pulada.
+    Tem uma segunda tentativa automática caso o servidor demore a responder.
+
+    Retorna True se encontrou e selecionou a pessoa, False caso contrário.
+    """
+    texto = str(texto).strip()
+
+    if not abrir_select2(id_container_s2):
+        print(f"    ❌ Não conseguiu abrir '{id_container_s2}'")
+        return False
+
+    search = obter_search_input()
+    if search is None:
+        print(f"    ❌ Campo de busca não apareceu para '{id_container_s2}'")
+        fechar_dropdown()
+        return False
+
+    _digitar_no_search(search, texto)
+
+    # Aguarda até 8 segundos pelas sugestões do servidor
+    # (aumentado de 5s pois o servidor pode demorar mais)
+    visiveis = aguardar_opcoes_dropdown(timeout=8)
+
+    if not visiveis:
+        # Segunda tentativa: às vezes o campo precisa de um segundo estímulo
+        print(f"    ⚠️  Sem sugestões na 1ª tentativa — tentando novamente...")
+        _digitar_no_search(search, texto)
+        time.sleep(1.0)
+        visiveis = aguardar_opcoes_dropdown(timeout=8)
+
+    if not visiveis:
+        print(f"    ❌ Nome '{texto}' não encontrado no sistema (sem sugestões)")
+        try:
+            search.send_keys(Keys.ESCAPE)
+        except Exception:
+            pass
+        fechar_dropdown()
+        return False
+
+    selecionou = False
+    texto_lower = texto.lower()
+
+    # Tentativa 1: correspondência exata pelo NOME (primeira coluna do resultado)
+    for li in visiveis:
+        try:
+            celulas = li.find_elements(By.CSS_SELECTOR, "div.select2-result-cell")
+            col1 = celulas[0].text.strip() if celulas else ""
+            if col1.lower() == texto_lower:
+                clicar(li)
+                print(f"    ✅ Selecionado pelo nome: '{col1}'")
+                selecionou = True
+                break
+        except Exception:
+            continue
+
+    # Tentativa 2: correspondência pelo E-MAIL (segunda coluna, parte antes do @)
+    if not selecionou:
+        for li in visiveis:
+            try:
+                celulas = li.find_elements(By.CSS_SELECTOR, "div.select2-result-cell")
+                col2 = celulas[1].text.strip() if len(celulas) >= 2 else ""
+                prefixo = col2.split("@")[0] if "@" in col2 else col2
+                if prefixo.lower() == texto_lower:
+                    clicar(li)
+                    print(f"    ✅ Selecionado pelo e-mail: '{col2}'")
+                    selecionou = True
+                    break
+            except Exception:
+                continue
+
+    if not selecionou:
+        # Mostra as opções disponíveis no terminal para facilitar a correção manual
+        resumo = []
+        for li in visiveis[:5]:
+            try:
+                celulas = li.find_elements(By.CSS_SELECTOR, "div.select2-result-cell")
+                c1 = celulas[0].text.strip() if celulas else ""
+                c2 = celulas[1].text.strip() if len(celulas) >= 2 else ""
+                resumo.append(f"[{c1} | {c2}]")
+            except Exception:
+                resumo.append(li.text.strip())
+        print(f"    ❌ Sem correspondência exata para '{texto}'. Opções: {resumo}")
+        try:
+            search.send_keys(Keys.ESCAPE)
+        except Exception:
+            pass
+        fechar_dropdown()
+        return False
+
+    fechar_dropdown()
+    aguardar_selecao_confirmada(id_container_s2)
+    return True
+
+
+def preencher_reference_setor(id_container_s2, texto):
+    """
+    Preenche o campo "setor".
+    Tenta encontrar o setor exato primeiro.
+    Se não encontrar, usa "adm" como termo de busca alternativo (fallback)
+    e seleciona a primeira opção disponível.
+
+    ⚠️  ALTERE AQUI ao reutilizar:
+    O fallback "adm" é específico para este formulário da Rede D'Or.
+    Troque por outro termo genérico que faça sentido no seu contexto.
+    """
+    texto = str(texto).strip()
+
+    if not abrir_select2(id_container_s2):
+        print(f"    ❌ Não conseguiu abrir '{id_container_s2}'")
+        return
+
+    search = obter_search_input()
+    if search is None:
+        print(f"    ❌ Campo de busca não apareceu para '{id_container_s2}'")
+        fechar_dropdown()
+        return
+
+    _digitar_no_search(search, texto)
+    visiveis = aguardar_opcoes_dropdown(timeout=4)
+    selecionou = _selecionar_por_celulas(visiveis, texto) if visiveis else False
+
+    if not selecionou:
+        # Fallback: busca por "adm" e seleciona a primeira opção
+        print(f"    ⚠️  '{texto}' não encontrado — fallback: digitando 'adm' e selecionando 1ª opção...")
+        _digitar_no_search(search, "adm")  # ⚠️  Altere "adm" se necessário
+        time.sleep(1.0)
+        visiveis = aguardar_opcoes_dropdown(timeout=6)
+
+        if visiveis:
+            primeira = visiveis[0]
+            print(f"    → Primeira opção disponível: '{primeira.text.strip()}'")
+            clicar(primeira)
+            print(f"    ✅ Setor selecionado (fallback): '{primeira.text.strip()}'")
+            selecionou = True
+        else:
+            print(f"    ❌ Nenhuma opção encontrada nem com 'adm'.")
+            try:
+                search.send_keys(Keys.ESCAPE)
+            except Exception:
+                pass
+
+    fechar_dropdown()
+    if selecionou:
+        aguardar_selecao_confirmada(id_container_s2)
+
+
+def preencher_input(id_campo, valor):
+    """
+    Preenche um campo de texto simples (input HTML comum, não Select2).
+    Aguarda o campo estar clicável, limpa o conteúdo anterior e digita o valor.
+    Usado para campos como: telefone, setor de instalação e descrição.
+    """
+    fechar_dropdown()  # Fecha qualquer dropdown aberto antes de interagir
+    el = WAIT_MEDIO.until(EC.element_to_be_clickable((By.ID, id_campo)))
+    el.clear()
+    el.send_keys(str(valor).strip())
+
+
+def capturar_protocolo():
+    """
+    Tenta capturar o número do chamado (RITM/REQ/INC/CHG) após o envio do formulário.
+    Usa 4 estratégias em ordem crescente de complexidade:
+
+      1. Título da janela do navegador (mais rápido — o ServiceNow atualiza o <title> primeiro)
+      2. Links CSS com o número na página de confirmação
+      3. Texto genérico em elementos da página
+      4. URL atual do navegador
+
+    Se nenhuma estratégia funcionar, retorna "N/A" e avisa o usuário.
+    Linhas com "N/A" são reprocessadas automaticamente na próxima execução.
+
+    ⚠️  ALTERE AQUI ao reutilizar em outro sistema:
+    Os prefixos RITM, REQ, INC, CHG são padrão do ServiceNow.
+    Troque pelos padrões de número do seu sistema.
+    """
+
+    # Estratégia 1: título da janela (mais rápido e confiável)
+    try:
+        WebDriverWait(driver, 10).until(
+            lambda d: re.search(r"(RITM|REQ|INC|CHG)\d+", d.title, re.IGNORECASE)
+        )
+        match = re.search(r"(RITM|REQ|INC|CHG)\d+", driver.title, re.IGNORECASE)
+        if match:
+            print(f"  📋 Protocolo (título): {match.group(0)}")
+            return match.group(0)
+    except Exception:
+        pass
+
+    # Estratégia 2: seletores CSS específicos na página de confirmação
+    # Timeout de 25s pois páginas lentas podem demorar para renderizar o número
+    seletores_ritm = [
+        "td.wrapper-md a[title^='RITM']",
+        "td.wrapper-md a[title^='REQ']",
+        "td.wrapper-md a[href*='sc_req_item']",
+        "a[title^='RITM']",
+        "a[title^='REQ']",
+    ]
+    for seletor in seletores_ritm:
+        try:
+            WebDriverWait(driver, 25).until(EC.presence_of_element_located((By.CSS_SELECTOR, seletor)))
+            el = driver.find_element(By.CSS_SELECTOR, seletor)
+            numero = el.get_attribute("title") or el.text.strip()
+            if re.match(r"(RITM|REQ|INC|CHG)\d+", numero, re.IGNORECASE):
+                print(f"  📋 Protocolo: {numero}")
+                return numero
+        except Exception:
+            continue
+
+    # Estratégia 3: busca por texto em elementos genéricos da página
+    seletores_texto = [
+        "h1.page-header", "div.panel-heading h1", "span.outputmsg_text",
+        "div#outputmsg", "div.request-number", "h2",
+        ".form-group .form-control-static",
+    ]
+    for seletor in seletores_texto:
+        try:
+            for el in driver.find_elements(By.CSS_SELECTOR, seletor):
+                match = re.search(r"(RITM|REQ|INC|CHG|TASK)\d+", el.text.strip(), re.IGNORECASE)
+                if match:
+                    return match.group(0)
+        except Exception:
+            continue
+
+    # Estratégia 4: tenta extrair o número da URL atual
+    match = re.search(r"(RITM|REQ|INC)\d+", driver.current_url, re.IGNORECASE)
+    if match:
+        return match.group(0)
+
+    # Nenhuma estratégia funcionou — o chamado provavelmente foi aberto,
+    # mas o número não pôde ser lido automaticamente
+    print("  ⚠️  ATENÇÃO: chamado enviado mas número não capturado automaticamente.")
+    print("              Verifique manualmente no ServiceNow e corrija a planilha.")
+    return "N/A"
+
+
+# =========================
+# MAPEAMENTO DOS CAMPOS
+# =========================
+# ⚠️  ESTA É A SEÇÃO MAIS IMPORTANTE PARA REUTILIZAÇÃO.
+# Cada dicionário mapeia o nome da coluna da planilha ao ID do campo no HTML do formulário.
+
+# SELECT2: campos de lista suspensa (dropdown com opções fixas)
+# Chave = nome da coluna na planilha (normalizado, sem acentos e minúsculo)
+# Valor = ID do container Select2 no HTML da página (atributo "id" do elemento)
+# ⚠️  Para encontrar o ID: inspecione o elemento no navegador (F12 → selecione o campo → copie o id)
+SELECT2 = {
+    "usuario":             "s2id_sp_formfield_u_solicitacao_propria",
+    "localizado":          "s2id_sp_formfield_u_user_located",
+    "gerente: s/n":        "s2id_sp_formfield_u_confirmar_gestor",
+    "servico ti":          "s2id_sp_formfield_qual_servico_tecnologia",
+    "tipo de solicitacao": "s2id_sp_formfield_qual_servico_microinformatica",
+    "tipo de servico":     "s2id_sp_formfield_tipo_de_servi_o_microinformatica_Programas",
+    "aplicativo":          "s2id_sp_formfield_selecione_o_programa_aplicativo",
+    "utilizado":           "s2id_sp_formfield_o_software_aplicativo_ser_utilizado_pelo_pr_prio_solicitante",
+}
+
+# ID do campo Select2 especial para o nome da pessoa (busca no banco de usuários)
+REFERENCE_NOME = "s2id_sp_formfield_requested_for"
+
+# REFERENCE: campos de busca referenciada que não são "nome", "setor" ou "local"
+# (atualmente vazio, mas pode ser expandido se o formulário tiver outros campos desse tipo)
+REFERENCE = {}
+
+# INPUTS: campos de texto simples (input HTML)
+# Chave = nome da coluna na planilha
+# Valor = ID do campo HTML (atributo "id" do elemento <input> ou <textarea>)
+INPUTS = {
+    "telefone":    "sp_formfield_u_informe_telefone_para_contato",
+    "setor inst.": "sp_formfield_setor_de_instala_o_do_software_aplicativo",
+    "descricao":   "sp_formfield_description",
+}
+
+# ORDEM: define a sequência em que os campos serão preenchidos.
+# ⚠️  A ordem importa! Alguns campos só aparecem após outros serem preenchidos
+# (por exemplo, "aplicativo" só aparece depois de "tipo de servico").
+# Mantenha esta ordem ao adicionar ou remover campos.
+ORDEM = [
+    "usuario", "nome", "localizado", "telefone", "gerente: s/n",
+    "local", "setor", "servico ti", "tipo de solicitacao",
+    "tipo de servico", "aplicativo", "utilizado", "setor inst.", "descricao"
+]
+
+# ID do container Select2 do campo "local" (tratado separadamente por ter lógica própria)
+LOCAL_S2_ID = "s2id_sp_formfield_u_unidade_hosp"
+
+
+def valor_valido(val):
+    """
+    Verifica se um valor da planilha é considerado preenchido.
+    Retorna False para células vazias, NaN, "nan" ou "none" (resíduos do pandas).
+    """
+    return pd.notna(val) and str(val).strip().lower() not in ("", "nan", "none")
+
+
+# =========================
+# LOOP PRINCIPAL
+# =========================
+# Percorre todas as linhas da planilha e preenche o formulário para cada uma
+# que ainda não tem número de chamado (coluna "chamado" vazia ou com "N/A").
+
+# Listas para o relatório final
+linhas_sem_nome = []    # Linhas puladas porque o nome não foi encontrado no sistema
+linhas_sem_numero = []  # Linhas processadas mas cujo número não foi capturado (N/A)
+
+# Encontra a primeira linha pendente para exibir progresso correto no terminal
+primeira_pendente = None
+for index, linha in df.iterrows():
+    chamado_vazio = not valor_valido(linha.get("chamado", ""))
+    nome_vazio    = not valor_valido(linha.get("nome", ""))
+
+    if chamado_vazio and not nome_vazio:
+        primeira_pendente = index
+        break
+
+if primeira_pendente is None:
+    print("✅ Todas as linhas pendentes já possuem chamado ou estão sem nome. Nada a fazer.")
+    driver.quit()
+    raise SystemExit
+
+print(f"\n▶ Iniciando a partir da linha {primeira_pendente + 1}\n")
+
+# Loop principal: processa cada linha da planilha
+for index, linha in df.iterrows():
+    chamado_atual  = str(linha.get("chamado", "")).strip()
+    chamado_vazio  = not valor_valido(linha.get("chamado", ""))
+    nome_vazio     = not valor_valido(linha.get("nome", ""))
+
+    # Considera "N/A" como pendente: o chamado pode ter sido aberto mas sem número capturado,
+    # então tenta novamente na próxima execução
+    chamado_pendente = chamado_vazio or chamado_atual == "N/A"
+
+    if not chamado_pendente:
+        print(f"⏭ Linha {index + 1} já tem chamado ({chamado_atual}), pulando.")
+        continue
+
+    if nome_vazio:
+        print(f"⏭ Linha {index + 1} sem nome preenchido, pulando.")
+        continue
+
+    nome_da_linha = str(linha.get("nome", "")).strip()
+    reprocessando = chamado_atual == "N/A"
+    status_label  = "🔁 REPROCESSANDO (era N/A)" if reprocessando else "🔵 Nova solicitação"
+    print(f"\n{status_label} {index + 1}/{len(df)} — Nome: {nome_da_linha}")
+
+    # Abre o formulário no navegador e aguarda carregar
+    try:
+        driver.get(URL)
+        aguardar_formulario()
+    except Exception as e:
+        print(f"  ❌ Erro ao carregar formulário: {e}")
+        continue
+
+    nome_encontrado = True  # Flag para controlar se o nome foi encontrado no sistema
+
+    # Preenche cada campo na ordem definida em ORDEM
+    for col in ORDEM:
+        if col not in df.columns:
+            continue  # Pula colunas que não existem na planilha
+
+        valor = linha.get(col, "")
+        if not valor_valido(valor):
+            continue  # Pula campos vazios na linha atual
+
+        print(f"  → '{col}' = '{valor}'")
+        try:
+            if col == "nome":
+                # Campo especial: busca por pessoa no banco de usuários do ServiceNow
+                nome_encontrado = preencher_reference_nome(REFERENCE_NOME, valor)
+
+                if not nome_encontrado:
+                    print(f"  ⚠️  Nome '{valor}' não encontrado. Pulando linha {index + 1}...")
+                    linhas_sem_nome.append({
+                        "linha":  index + 1,
+                        "nome":   valor,
+                        "motivo": "Nome não encontrado no sistema ServiceNow"
+                    })
+                    try:
+                        driver.get("about:blank")  # Limpa a página para não interferir na próxima
+                    except Exception:
+                        pass
+                    break  # Interrompe o preenchimento desta linha
+
+            elif col == "setor":
+                # Campo com lógica de fallback para "adm"
+                preencher_reference_setor("s2id_sp_formfield_u_setor", valor)
+
+            elif col == "local":
+                # Campo que sempre seleciona a primeira opção disponível
+                preencher_reference_local(LOCAL_S2_ID, valor)
+
+            elif col in SELECT2:
+                # Campo de lista suspensa padrão
+                selecionar_select2(SELECT2[col], valor)
+
+                # Caso especial: após "tipo de servico", aguarda o campo "aplicativo" aparecer,
+                # pois ele só é exibido condicionalmente dependendo do tipo selecionado
+                if col == "tipo de servico":
+                    print("  ⏳ Aguardando campo aplicativo...")
+                    try:
+                        WAIT_CURTO.until(EC.visibility_of_element_located(
+                            (By.ID, "s2id_sp_formfield_selecione_o_programa_aplicativo")
+                        ))
+                        print("  ✅ Campo aplicativo pronto!")
+                    except Exception:
+                        pass
+
+            elif col in REFERENCE:
+                # Campo de busca referenciada genérico (atualmente não usado, mas disponível)
+                preencher_reference(REFERENCE[col], valor)
+
+            elif col in INPUTS:
+                # Campo de texto simples (input HTML)
+                preencher_input(INPUTS[col], valor)
+
+        except Exception as e:
+            print(f"    ❌ Erro no campo '{col}': {e}")
+            fechar_dropdown()  # Garante que nenhum dropdown fique aberto após erro
+
+    if not nome_encontrado:
+        continue  # Pula para a próxima linha se o nome não foi encontrado
+
+    # Envia o formulário clicando no botão "Enviar"
+    print("  → Enviando formulário...")
+    try:
+        submit = WAIT_LONGO.until(EC.element_to_be_clickable((By.ID, "submit-btn")))
+        clicar(submit)
+    except Exception as e:
+        print(f"  ❌ Erro ao enviar: {e}")
+        continue
+
+    # Captura o número do chamado gerado e salva na planilha
+    protocolo = capturar_protocolo()
+    df.at[index, "chamado"] = protocolo
+    print(f"  ✅ Chamado: {protocolo}")
+
+    # Registra para o relatório final se o número não foi capturado
+    if protocolo == "N/A":
+        linhas_sem_numero.append({"linha": index + 1, "nome": nome_da_linha})
+
+    salvar_planilha()  # Salva imediatamente após cada chamado (evita perda de dados)
+
+    # Navega de volta ao formulário para o próximo registro
+    if index < len(df) - 1:
+        print("  🔄 Próximo chamado...")
+        driver.back()
+        try:
+            aguardar_formulario()
+        except Exception:
+            # Se o "back" não levou ao formulário, acessa a URL diretamente
+            driver.get(URL)
+            aguardar_formulario()
+
+# Encerra o navegador após processar todas as linhas
+driver.quit()
+print("\n🎉 Concluído! Chamados salvos em 'automacao.xlsx'.")
+
+
+# =========================
+# RELATÓRIO FINAL
+# =========================
+# Exibe um resumo do que aconteceu durante a execução
+
+print("\n" + "=" * 60)
+
+# Relatório 1: linhas puladas por nome não encontrado no sistema
+if linhas_sem_nome:
+    print(f"⚠️  RELATÓRIO — {len(linhas_sem_nome)} chamado(s) NÃO aberto(s) por nome não encontrado:\n")
+    print(f"  {'Linha':<8} {'Nome'}")
+    print(f"  {'-'*8} {'-'*40}")
+    for item in linhas_sem_nome:
+        print(f"  {item['linha']:<8} {item['nome']}")
+    print(f"\n  Motivo: {linhas_sem_nome[0]['motivo']}")
+    print("\n  💡 Verifique se os nomes estão cadastrados no ServiceNow")
+    print("     e corrija a planilha para reprocessar estas linhas.")
+else:
+    print("✅ Todos os chamados foram abertos com sucesso! Nenhum nome faltou.")
+
+# Relatório 2: chamados abertos mas cujo número não foi capturado automaticamente
+if linhas_sem_numero:
+    print(f"\n⚠️  RELATÓRIO — {len(linhas_sem_numero)} chamado(s) aberto(s) mas SEM número capturado (N/A):\n")
+    print(f"  {'Linha':<8} {'Nome'}")
+    print(f"  {'-'*8} {'-'*40}")
+    for item in linhas_sem_numero:
+        print(f"  {item['linha']:<8} {item['nome']}")
+    print("\n  💡 O formulário FOI enviado, mas o número não apareceu a tempo.")
+    print("     Acesse o ServiceNow, filtre por data/hora e corrija a planilha.")
+    print("     Na próxima execução, linhas com N/A serão reprocessadas automaticamente.")
+
+print("=" * 60)
