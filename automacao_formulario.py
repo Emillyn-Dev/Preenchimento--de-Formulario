@@ -1,7 +1,3 @@
-#Para rodar o código, preciso estar na pasta correta (escrevo cd .\Formulário)
-#Depois ativo o venv (escrevo  .\.venv\Scripts\Activate.ps1 )
-#Ai coloco pra rodar
-
 
 import os
 import re
