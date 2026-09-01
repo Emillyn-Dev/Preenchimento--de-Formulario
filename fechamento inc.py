@@ -1,12 +1,3 @@
-# =============================================================
-# Como usar:
-#   1. Abra o terminal na pasta do script
-#   2. Ative o venv:  .\.venv\Scripts\Activate
-#   3. Execute:       python f_inc_2.py
-#
-#   Parâmetros opcionais (sem precisar editar o código):
-#     python f_inc_2.py --planilha "RITM - INC.xlsx" --sheet INC
-# =============================================================
 
 from __future__ import annotations
 
@@ -32,24 +23,12 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select, WebDriverWait
 
 
-# PASTA_RAIZ = pasta onde este arquivo .py esta salvo. Como a planilha e o
-# msedgedriver.exe ficam na mesma pasta do codigo, os caminhos abaixo se
-# ajustam sozinhos, nao importa em qual maquina/pasta o projeto esteja.
+
 PASTA_RAIZ = Path(__file__).resolve().parent
 
 PLANILHA_PADRAO = PASTA_RAIZ / "RITM - INC.xlsx"  # [MUDAR AQUI, se o nome do arquivo for diferente]
-SHEET_PADRAO = "INC"  # troque pra "RITM" se quiser fechar os chamados dessa aba
-DRIVER_PADRAO = PASTA_RAIZ / "edgedriver_win64" / "msedgedriver.exe"  # [MUDAR AQUI, se o nome do arquivo for diferente]
-# A versao do msedgedriver.exe tem que bater com a versao do Edge
-# instalado na maquina. Se for diferente, baixe o driver certo em:
-# https://developer.microsoft.com/microsoft-edge/tools/webdriver/
-
-# O ServiceNow dessa empresa usa autenticacao integrada do Windows (SSO):
-# ele reconhece sozinho o usuario que esta logado no Windows da maquina,
-# sem precisar de cookie/login salvo no perfil do Edge. Por isso o script
-# so abre uma sessao de automacao comum do Edge, que ja entra logada
-# sozinha, em qualquer conta que estiver ativa na maquina -- assim funciona
-# igual em qualquer computador, sem precisar fechar o Edge antes de rodar.
+SHEET_PADRAO = "INC"  
+DRIVER_PADRAO = PASTA_RAIZ / "edgedriver_win64" / "msedgedriver.exe"  
 
 
 URL_LISTA = (
@@ -72,34 +51,25 @@ ID_BUSCA_GLOBAL = "sncwsgs-typeahead-input"
 ID_CAMPO_GRUPO = "sys_display.incident.assignment_group"
 ID_CAMPO_FECHAR = "sys_display.incident.assigned_to"
 
-# Campo "Estado" do chamado (select). Se ja estiver como "Resolvido", o
-# chamado e pulado sem mexer em nada -- so grava na planilha que ja estava
-# fechado e segue pro proximo.
+
 ID_CAMPO_ESTADO = "incident.state"
 TEXTO_ESTADO_RESOLVIDO = "resolvido"
 
-# Nome do template que sempre deve ser aplicado no final (fixo, nao vem da planilha).
-# O "data-ref" e o identificador interno (sys_id) do template -- casar por ele e
-# mais confiavel do que casar pelo texto, porque nao muda mesmo que o nome do
-# template seja editado depois.
+
 NOME_TEMPLATE = "Emy - INC"
 REF_TEMPLATE = "1995947d970a435848cfbcc6f053aff8"
 
-# Id do iframe onde o ServiceNow (UI classica) carrega o formulario do
-# chamado (campos, barra de templates, botao Resolver). Sem trocar pra esse
-# iframe, o Selenium fica "olhando" pro documento principal e nao acha
-# nenhum desses elementos.
+
 ID_IFRAME_FORMULARIO = "gsft_main"
 
-# Nome da coluna onde o resultado de cada chamado e gravado de volta na
+
 
 COLUNA_STATUS = "status"
 
 # =========================
 # LOGGING
 # =========================
-# Substitui os "print" espalhados por um logger, so no terminal mesmo
-# (mais organizado, com hora e nivel de cada mensagem).
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)-7s | %(message)s",
@@ -114,7 +84,7 @@ log = logging.getLogger("f_inc")
 @dataclass
 class Chamado:
     numero: str
-    linha_excel: int  # numero da linha na planilha (1-indexado, igual ao Excel) -- usado pra gravar o status de volta
+    linha_excel: int  
     grupo: Optional[str] = None
     fechar: Optional[str] = None
 
@@ -150,10 +120,7 @@ def verificar_planilha_fechada(planilha: Path) -> None:
 
 
 def carregar_chamados(planilha: Path, sheet: str) -> tuple[list[Chamado], int]:
-    """Le a planilha, detecta a linha de cabecalho automaticamente e devolve
-    a lista de chamados validos a processar, junto com o indice (0-based)
-    da linha de cabecalho -- usado depois pra gravar o status na linha
-    certa do Excel."""
+   
     df_raw = pd.read_excel(planilha, sheet_name=sheet, header=None, dtype=str)
 
     header_row = None
@@ -169,24 +136,14 @@ def carregar_chamados(planilha: Path, sheet: str) -> tuple[list[Chamado], int]:
 
     df = pd.read_excel(planilha, sheet_name=sheet, header=header_row, dtype=str)
     df.columns = [normalizar(col) for col in df.columns]
-    # NAO usar reset_index(drop=True) aqui: o indice do pandas precisa
-    # continuar batendo com a posicao real na planilha, pra calcular
-    # linha_excel corretamente logo abaixo.
+   
     df = df.dropna(how="all")
 
     if "chamado" not in df.columns:
         log.error("A planilha nao tem a coluna 'chamado'. Nada a fazer.")
         raise SystemExit(1)
 
-    # linha_excel: header_row e 0-based e aponta pra linha do cabecalho;
-    # os dados comecam na linha seguinte. Somando +2 (1 pra virar 1-based,
-    # +1 pra pular o cabecalho) e o indice da linha no df, chegamos na
-    # linha exata do Excel (1-indexada) pra cada chamado.
-    #
-    # So entra na lista quem tem a coluna 'chamado' preenchida E a coluna
-    # 'status' (nome definido em COLUNA_STATUS) ainda vazia na mesma linha
-    # -- ou seja, chamados ja processados numa rodada anterior sao pulados
-    # automaticamente.
+   
     coluna_status_normalizada = normalizar(COLUNA_STATUS)
     chamados = [
         Chamado(
@@ -239,11 +196,7 @@ class AutomacaoServiceNow:
     """
 
     def buscar_elemento_profundo(self, seletor_css: str) -> Optional[WebElement]:
-        """Procura um elemento pelo seletor CSS em todo o documento,
-        incluindo dentro de Shadow DOM aberto. A UI 'Next Experience' do
-        ServiceNow encapsula componentes (como a busca global) dentro de
-        shadow roots, e o find_element(By.ID, ...) padrao do Selenium nao
-        consegue enxergar la dentro -- por isso essa busca alternativa."""
+       
         return self.driver.execute_script(self.JS_BUSCA_PROFUNDA, seletor_css)
 
     def clicar(self, elemento: WebElement) -> None:
@@ -258,26 +211,13 @@ class AutomacaoServiceNow:
         """Espera o carregamento completo da pagina (document.readyState == complete)."""
         log.info("Aguardando pagina carregar completamente...")
         self.wait_longo.until(lambda d: d.execute_script("return document.readyState") == "complete")
-        time.sleep(0.1)  # pequena folga pra a tela terminar de montar depois do "complete"
+        time.sleep(0.1)  
 
     def entrar_frame_formulario(self) -> bool:
-        """Troca o contexto do Selenium pra dentro do iframe onde o
-        ServiceNow classico carrega o formulario do chamado (campos, barra
-        de templates, botao Resolver). Sem isso, os find_element/find_by_id
-        continuam procurando no documento principal e nunca acham nada --
-        falham calados, so com um aviso no log.
-
-        Na interface "Next Experience" do ServiceNow, esse iframe
-        ('gsft_main') fica dentro de um Web Component com Shadow DOM
-        (slot="core-ui"). O metodo padrao do Selenium
-        (frame_to_be_available_and_switch_to_it) so enxerga o documento
-        principal e nunca acha esse iframe -- por isso primeiro tentamos o
-        jeito padrao (mais rapido, cobre o caso da UI classica "pura") e,
-        se falhar, caimos pra busca profunda em Shadow DOM (igual a usada
-        no campo de busca global)."""
+       
         self.driver.switch_to.default_content()
 
-        # Tentativa 1: jeito padrao (funciona se o iframe estiver no documento principal, sem Shadow DOM)
+       
         try:
             self.wait_curto.until(
                 EC.frame_to_be_available_and_switch_to_it((By.ID, ID_IFRAME_FORMULARIO))
@@ -287,7 +227,7 @@ class AutomacaoServiceNow:
         except Exception:
             self.driver.switch_to.default_content()
 
-        # Tentativa 2: busca profunda em Shadow DOM (Next Experience)
+       
         log.info("Iframe nao encontrado no documento principal -- procurando dentro de Shadow DOM...")
         seletor = f"#{ID_IFRAME_FORMULARIO}"
         prazo = time.time() + 15
@@ -315,14 +255,11 @@ class AutomacaoServiceNow:
             return False
 
     def sair_frame_formulario(self) -> None:
-        """Volta o contexto do Selenium pro documento principal (fora de
-        qualquer iframe) -- necessario antes de usar a busca global de novo."""
+       
         self.driver.switch_to.default_content()
 
     def selecionar_na_lista(self, numero: str) -> bool:
-        """Se o Enter levar pra uma pagina de lista de resultados (em vez de
-        abrir o chamado direto), procura um link cujo texto contenha o
-        numero exato do chamado e clica nele."""
+       
         try:
             links = self.driver.find_elements(By.PARTIAL_LINK_TEXT, numero)
             visiveis = [l for l in links if l.is_displayed()]
@@ -335,10 +272,7 @@ class AutomacaoServiceNow:
         return False
 
     def selecionar_primeira_sugestao(self, campo: WebElement) -> bool:
-        """Seleciona a primeira sugestao da lista de autocomplete classica do
-        ServiceNow. Primeiro tenta achar a lista pelo id indicado no
-        atributo 'aria-owns' do proprio campo; se nao achar nada visivel,
-        usa teclado (seta pra baixo + Enter) como alternativa."""
+       
         aria_owns = campo.get_attribute("aria-owns")
         if aria_owns:
             try:
@@ -368,9 +302,7 @@ class AutomacaoServiceNow:
             return False
 
     def preencher_autocomplete_classic(self, id_campo: str, texto: str) -> bool:
-        """Preenche um campo de referencia classico do ServiceNow (tipo
-        'assignment_group' ou 'assigned_to'), espera as sugestoes
-        carregarem via AJAX e seleciona a primeira."""
+        
         log.info("Preenchendo campo '%s' com '%s'...", id_campo, texto)
         try:
             campo = self.wait_medio.until(EC.element_to_be_clickable((By.ID, id_campo)))
@@ -388,10 +320,7 @@ class AutomacaoServiceNow:
         return self.selecionar_primeira_sugestao(campo)
 
     def aplicar_template(self, nome_template: str = NOME_TEMPLATE, ref_template: Optional[str] = REF_TEMPLATE) -> bool:
-        """Procura, entre os templates disponiveis na tela, o link certo e
-        clica nele. Da preferencia a casar pelo 'data-ref' (o sys_id do
-        template, que nao muda mesmo se o nome for editado depois); se nao
-        vier ref ou nao achar por ele, cai pra casar pelo texto do nome."""
+        
         nome_lower = nome_template.strip().lower()
 
         try:
@@ -428,13 +357,7 @@ class AutomacaoServiceNow:
         return False
 
     def _aguardar_template_aplicado(self, link_clicado: WebElement, tempo_limite: float = 15.0) -> None:
-        """Espera o template realmente terminar de ser aplicado antes de
-        seguir. O ServiceNow processa isso via AJAX (preenche os campos e
-        fecha o painel de templates), e o sinal mais confiavel que temos
-        e o proprio link clicado sumir do DOM ('ficar stale') quando o
-        painel fecha. Alem disso, colocamos uma folga extra depois, porque
-        o preenchimento dos campos pode continuar por um instante mesmo
-        depois do painel fechar."""
+       
         log.info("Aguardando o template ser aplicado...")
         try:
             WebDriverWait(self.driver, tempo_limite).until(EC.staleness_of(link_clicado))
@@ -444,12 +367,7 @@ class AutomacaoServiceNow:
         time.sleep(0.1)  # folga extra pro AJAX terminar de preencher os campos
 
     def aguardar_formulario_pronto(self, tempo_limite: float = 20.0) -> None:
-        """Espera o formulario classico terminar de inicializar o proprio
-        JavaScript (g_form.isLoaded()) antes de interagir com ele. So a
-        pagina estar com readyState 'complete' nao garante que os botoes
-        (como 'Resolver') ja tem o evento de clique conectado -- clicar
-        cedo demais faz o clique "sumir" sem erro nenhum, sem popup, sem
-        nada mudar na tela."""
+       
         try:
             WebDriverWait(self.driver, tempo_limite).until(
                 lambda d: d.execute_script(
@@ -463,11 +381,7 @@ class AutomacaoServiceNow:
             time.sleep(0.15)
 
     def obter_texto_estado(self) -> Optional[str]:
-        """Le o valor atualmente selecionado no campo 'Estado'
-        (select#incident.state) do formulario do chamado. Precisa ser
-        chamado depois de ja estar dentro do iframe do formulario. Devolve
-        o texto normalizado (sem acento, minusculo) ou None se nao
-        conseguir ler o campo."""
+       
         try:
             elemento = self.wait_curto.until(
                 EC.presence_of_element_located((By.ID, ID_CAMPO_ESTADO))
@@ -480,23 +394,17 @@ class AutomacaoServiceNow:
             return None
 
     def clicar_resolver(self) -> bool:
-        """Clica no botao "Resolver" do formulario do chamado (id:
-        resolve_incident) e confirma que a URL mudou."""
+       
         try:
             botao = self.wait_medio.until(EC.element_to_be_clickable((By.ID, "resolve_incident")))
         except Exception as e:
             log.warning("Botao 'Resolver' nao encontrado: %s", e)
             return False
 
-        # (O formulario ja foi confirmado como pronto -- g_form.isLoaded() -- antes
-        # de comecar a preencher os campos, entao nao precisa checar de novo aqui.)
-
+       
         url_antes = self.driver.current_url
 
-        # Clique reforcado: tenta o clique normal/JS (via self.clicar) e,
-        # se a URL nao mudar em alguns segundos, tenta de novo com
-        # ActionChains (simula um clique de mouse "de verdade", que
-        # dispara os eventos que alguns handlers do ServiceNow esperam).
+       
         self.clicar(botao)
         log.info("Botao 'Resolver' clicado.")
 
@@ -514,10 +422,7 @@ class AutomacaoServiceNow:
         try:
             self.wait_medio.until(lambda d: d.current_url != url_antes)
             log.info("Chamado resolvido -- voltou pra pagina de tarefas.")
-            # Ao resolver, o iframe do formulario e destruido e a pagina de
-            # tarefas (antiga) carrega no documento principal. Saimos do
-            # contexto do iframe (senao ele fica "stale") e esperamos essa
-            # pagina terminar de carregar antes de seguir pro proximo chamado.
+           
             self.driver.switch_to.default_content()
             self.aguardar_pagina_completa()
             return True
@@ -527,11 +432,7 @@ class AutomacaoServiceNow:
             return False
 
     def abrir_busca_global(self) -> WebElement:
-        """O campo de busca global so fica realmente "ativo" depois que voce
-        clica nele. Como e um componente React/Web Component (as vezes
-        dentro de Shadow DOM), um clique via JS as vezes nao da foco de
-        teclado de verdade, entao confirmamos o foco explicitamente e
-        forcamos via JS se precisar."""
+       
         seletor = f"#{ID_BUSCA_GLOBAL}"
         campo = None
         prazo = time.time() + 60
@@ -582,7 +483,7 @@ class AutomacaoServiceNow:
         campo.send_keys(Keys.DELETE)
         time.sleep(0.15)
         campo.send_keys(numero)
-        time.sleep(0.8)  # da tempo do typeahead reagir
+        time.sleep(0.8)  
 
         valor_atual = campo.get_attribute("value")
         if valor_atual and numero in valor_atual:
@@ -606,7 +507,7 @@ class AutomacaoServiceNow:
         resultados)."""
         log.info("Abrindo chamado %s...", numero)
 
-        self.sair_frame_formulario()  # garante que comeca fora de qualquer iframe do chamado anterior
+        self.sair_frame_formulario()  
         self.driver.get(URL_LISTA)
         self.aguardar_pagina_completa()
 
@@ -616,7 +517,7 @@ class AutomacaoServiceNow:
             log.warning("Campo de busca global nao encontrado: %s", e)
             return False
 
-        time.sleep(0.5)  # pequena folga antes de digitar o numero (o campo ja foi confirmado como ativo)
+        time.sleep(0.5)  
         valor_atual = self._digitar_numero(campo, numero)
         log.debug("Valor no campo apos digitar: '%s'", valor_atual)
 
@@ -629,8 +530,7 @@ class AutomacaoServiceNow:
         return self._aguardar_abertura_chamado(numero)
 
     def _aguardar_abertura_chamado(self, numero: str, tempo_limite: float = 15.0) -> bool:
-        """Confirma se o chamado abriu, tentando varios sinais em loop:
-
+       
         1. A URL passou a conter o numero do chamado (as vezes acontece,
            mas o ServiceNow costuma navegar usando o sys_id interno em vez
            do numero, entao esse sinal sozinho nao e confiavel).
@@ -672,15 +572,7 @@ class AutomacaoServiceNow:
         return False
 
     def processar_chamado(self, item: Chamado) -> str:
-        """Executa o fluxo completo (abrir, preencher, aplicar template,
-        resolver) para um unico chamado.
-
-        Devolve um status em texto:
-          - "fechado"     -> o script resolveu o chamado agora.
-          - "ja_fechado"  -> o campo 'Estado' ja estava 'Resolvido';
-                              o chamado foi pulado sem mexer em nada.
-          - "falha"       -> algo deu errado e o chamado nao foi confirmado.
-        """
+       
         if not self.abrir_chamado(item.numero):
             return "falha"
 
@@ -727,12 +619,7 @@ PREENCHIMENTO_FALHA = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill
 
 
 def preparar_coluna_status(planilha: Path, sheet: str, header_row: int, nome_coluna: str = COLUNA_STATUS):
-    """Abre a planilha com openpyxl (preservando formatacao/formulas) e
-    garante que existe uma coluna de status na aba. Se ja existir (mesmo
-    nome, ignorando acentos/maiusculas), reaproveita; senao cria uma nova
-    coluna logo apos a ultima usada na linha de cabecalho.
-
-    Retorna (workbook, worksheet, indice_da_coluna_status)."""
+   
     try:
         wb = load_workbook(planilha)
     except InvalidFileException as e:
@@ -744,7 +631,7 @@ def preparar_coluna_status(planilha: Path, sheet: str, header_row: int, nome_col
         raise SystemExit(1)
 
     ws = wb[sheet]
-    linha_cabecalho_excel = header_row + 1  # openpyxl e 1-indexado
+    linha_cabecalho_excel = header_row + 1  
 
     ultima_coluna = 0
     col_status = None
@@ -763,19 +650,7 @@ def preparar_coluna_status(planilha: Path, sheet: str, header_row: int, nome_col
 
 
 def atualizar_status_planilha(wb, ws, col_status: int, item: "Chamado", status: str) -> None:
-    """Escreve o resultado de um chamado na linha correspondente.
-
-    - status == "fechado": o script resolveu o chamado agora. Grava
-      "fechado" e pinta de verde. E esse texto que faz a linha ser
-      pulada numa proxima rodada (ver carregar_chamados).
-    - status == "ja_fechado": o campo 'Estado' ja estava 'Resolvido' --
-      o script nao mexeu em nada. Grava "ja fechado" e pinta de azul.
-      Tambem faz a linha ser pulada numa proxima rodada.
-    - status == "falha": NAO escreve nada na coluna de status (fica
-      vazia), so pinta a celula de vermelho como aviso visual. Assim,
-      como a celula continua vazia, o chamado volta a ser tentado
-      automaticamente na proxima execucao do script.
-    """
+   
     celula = ws.cell(row=item.linha_excel, column=col_status)
     if status == "fechado":
         celula.value = "fechado"
@@ -789,8 +664,7 @@ def atualizar_status_planilha(wb, ws, col_status: int, item: "Chamado", status: 
 
 
 def salvar_planilha_com_retentativa(wb, planilha: Path, tentativas: int = 3) -> bool:
-    """Tenta salvar a planilha; se estiver aberta no Excel (PermissionError),
-    avisa e da a chance de fechar o arquivo antes de tentar de novo."""
+    
     for tentativa in range(1, tentativas + 1):
         try:
             wb.save(planilha)
@@ -817,30 +691,16 @@ def criar_driver(caminho_driver: Path) -> webdriver.Edge:
     options.add_argument("--start-maximized")
     options.add_argument("--disable-notifications")
 
-    # --- Reduz os sinais de que o navegador esta sendo controlado por automacao ---
-    # Por padrao o Selenium liga uma flag interna do Chromium/Edge
-    # (navigator.webdriver = true) e mostra uma barra "Chrome/Edge esta sendo
-    # controlado por software de teste automatizado". O Azure AD (login da
-    # Microsoft) usa esses sinais pra identificar que e um robo e, por
-    # seguranca, pula telas opcionais do fluxo de login -- entre elas a de
-    # "Manter conectado?". As linhas abaixo desligam esses sinais.
+   
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
 
-    # Nao usamos --user-data-dir/profile-directory de proposito: o
-    # ServiceNow autentica pelo login do Windows (SSO), entao o Edge ja
-    # abre logado na conta certa sem precisar reaproveitar nenhum perfil
-    # salvo. Isso tambem evita o erro "Chrome instance exited" que acontece
-    # quando se tenta abrir a pasta "User Data" real com o Edge normal
-    # ja rodando.
+   
 
     driver = webdriver.Edge(service=service, options=options)
 
-    # Camada extra: mesmo com as flags acima, o Edge ainda expoe
-    # "navigator.webdriver" como True em algumas versoes. Esse comando roda
-    # um pequeno script ANTES de qualquer pagina carregar, sobrescrevendo
-    # essa propriedade pra "undefined" -- como se fosse um navegador normal.
+   
     try:
         driver.execute_cdp_cmd(
             "Page.addScriptToEvaluateOnNewDocument",
@@ -852,8 +712,7 @@ def criar_driver(caminho_driver: Path) -> webdriver.Edge:
             },
         )
     except Exception:
-        # Se o comando CDP nao for suportado nessa versao do driver, segue
-        # sem ele -- as flags do EdgeOptions ja ajudam bastante sozinhas.
+       
         log.warning("Nao foi possivel aplicar o script anti-deteccao via CDP (seguindo sem ele).")
 
     return driver
@@ -894,20 +753,16 @@ def main() -> None:
             status_resultado = automacao.processar_chamado(item)
             resultados.append((item, status_resultado))
 
-            # Grava o status na planilha logo apos cada chamado, pra nao
-            # perder o progresso se o script parar no meio (Ctrl+C, erro, etc.)
+           
             atualizar_status_planilha(wb, ws, col_status, item, status_resultado)
             salvar_planilha_com_retentativa(wb, args.planilha)
 
-            # Segue direto pro proximo chamado, sem pausa manual, assim que
-            # a pagina volta apos resolver o chamado atual.
+           
     except KeyboardInterrupt:
         log.warning("Interrompido pelo usuario (Ctrl+C).")
     finally:
-        # Garante que o navegador fecha mesmo se algo der errado no meio do loop
-        driver.quit()
-        # Ultima tentativa de salvar, pra garantir que nada de status fique
-        # so em memoria se algo tiver dado errado durante o loop.
+       
+        
         salvar_planilha_com_retentativa(wb, args.planilha)
 
     nao_confirmados = [item.numero for item, status in resultados if status == "falha"]
